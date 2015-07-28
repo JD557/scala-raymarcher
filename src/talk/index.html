@@ -1,0 +1,578 @@
+<!doctype html>
+<html lang="en">
+
+  <head>
+		<meta charset="utf-8">
+
+		<title>Ray Marching</title>
+
+		<meta name="description" content="A quick introduction to ray marching">
+		<meta name="author" content="Joao Costa">
+
+		<meta name="apple-mobile-web-app-capable" content="yes" />
+		<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+
+		<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, minimal-ui">
+
+		<link rel="stylesheet" href="css/reveal.css">
+		<link rel="stylesheet" href="css/theme/black.css" id="theme">
+
+		<!-- Code syntax highlighting -->
+		<link rel="stylesheet" href="lib/css/zenburn.css">
+
+		<!-- Printing and PDF exports -->
+		<script>
+			var link = document.createElement( 'link' );
+			link.rel = 'stylesheet';
+			link.type = 'text/css';
+			link.href = window.location.search.match( /print-pdf/gi ) ? 'css/print/pdf.css' : 'css/print/paper.css';
+			document.getElementsByTagName( 'head' )[0].appendChild( link );
+		</script>
+
+		<!--[if lt IE 9]>
+		<script src="lib/js/html5shiv.js"></script>
+		<![endif]-->
+	</head>
+
+	<body>
+
+		<div class="reveal">
+
+			<div class="slides">
+				<section>
+					<h1>Ray Marching</h1>
+            <img src="img/slisesix.jpg" alt="Slisesix">
+					<p>
+						<small>A <a href="https://www.shiftforward.eu">ShiftForward</a> tech talk by <a href="https://joaocosta.eu">João Costa</a> / <a href="http://twitter.com/hakimel">@JD557</a></small>
+					</p>
+				</section>
+
+				<section>
+					<h2>Notes about this talk</h2>
+					<ul>
+            <li>Based on the work of <a href="www.iquilezles.org">Iñigo Quílez (iq/rgba)</a></li>
+						<li>Code examples in Scala (CPU)</li>
+						<li>Practical application should be implemented for GPUs</li>
+					</ul>
+				</section>
+
+				<section>
+					<h2>Overview</h2>
+					<ul>
+            <li>Quick Rendering Intro</li>
+            <li>A Simple Ray Tracer</li>
+            <li>Distance Fields</li>
+            <li>Distance Field Operations</li>
+            <li>Illumination</li>
+					</ul>
+        </section>
+
+				<section>
+
+					<section>
+						<h2>Quick Rendering Intro</h2>
+						<ul>
+							<li>Rasterization</li>
+							<li>Ray Tracing*
+								<ul>
+									<li>Ray Casting</li>
+									<li>Path Tracing</li>
+									<li><strong>Ray Marching</strong></li>
+                  <li>...</li>
+								</ul>
+							</li>
+						</ul>
+						</p>
+            <small>*Some ray tracing methods go by multiple names and some names apply to multiple methods. The following definitions might not be accurate.</small>
+					</section>
+
+					<section>
+						<h2>Rasterization</h2>
+            <img src="img/pipeline.png" alt="Shader Pipeline">
+					</section>
+
+					<section>
+						<h2>Ray Casting</h2>
+						<ul>
+							<li>Simplest form of ray tracing</li>
+							<li>Cast a ray for each pixel (or vertical scanline) of the image plane</li>
+							<li>Solve ray-surface intersection test</li>
+							<img src="img/wolfmap.jpg" alt="Wolfenstein 3d map">
+							<img src="img/raycasthit.gif" alt="Ray Casting">
+							<img src="img/wolf3d.jpg" alt="Wolfenstein 3d screenshot">
+						</ul>
+					</section>
+
+					<section>
+						<h2>Path tracing</h2>
+						<ul>
+							<li>Solve the rendering equation via Monte-Carlo integration</li>
+							<li>Trace a rays with weighted random reflections/transmissions</li>
+							<li>Multiple iterations are required to avoid noisy images</li>
+						</ul>
+						<img src="img/pathtracing.png" alt="Path tracing diagram" height="256px">
+						<img src="img/pathtracingnoise.jpg" alt="Path tracing noise" height="256px">
+					</section>
+
+
+					<section>
+						<h2>Ray marching</h2>
+						<ul>
+							<li>Also known as sphere marching</li>
+							<li>Objects and scenes are represented as distance fields</li>
+							<li>Resulting image is calculated by marching through the distance field</li>
+						</ul>
+					</section>
+				</section>
+
+				<section>
+					<section>
+						<h2>A simple ray tracer</h2>
+						<p>Object: collision function $f:R^3 \rightarrow Boolean$</p>
+            <p>eg.:
+              $sphere(x, y, z) = \sqrt{x^2 + y^2 + z^2} \leq 1$
+            </p>
+						<pre><code data-trim class="scala">
+case class Vec3d(x: Double, y: Double, z: Double) { ... }
+type Object3d = Vec3d =&gt; Boolean
+val sphere: Object3d =
+  (v: Vec3d) =&gt; sqrt(v.x*v.x + v.y*v.y + v.z*v.z) &lt;= 1.0
+						</code></pre>
+					</section>
+
+					<section>
+						<ul>
+              <li>Trace a ray from the eye to each pixel of the image plane</li>
+              <li>"March" through it in small $\vec \Delta$ of size $\epsilon$</li>
+              <li>If it hits someting, render a color</li>
+						</ul>
+						<img src="img/simple_tracer.png" alt="Simple Tracer" height="200px">
+            <p>
+              <small>Note: this is not ray marching</small>
+            </p>
+					</section>
+
+					<section>
+						<pre><code data-trim class="scala">
+def traceRay(x: Double, y: Double, obj: Object3d, eps: Double) = {
+  val initVector = Vec3d(x, y, zNear)
+  val delta = initVector.normalize
+  def traceRayAux(pos: Vec3d): Color = obj(pos) match {
+    case true =&gt;
+      Color(255, 255, 255)
+    case false =&gt;
+      if (pos.z &gt; zFar) Color(0, 0, 0)
+      else traceRayAux(pos + delta*eps)
+  }
+  traceRayAux(initVector)
+}
+						</code></pre>
+					</section>
+
+          <section>
+            <h3>Colors and textures</h3>
+            <p>
+              Colors/3d textures can be easilly implemented:
+              <pre><code data-trim class="scala">
+type Object3d = Vec3d =&gt; Option[Color]
+              </code></pre>
+            </p>
+            <p>
+              This will be ommited in this talk, as it adds unnecessary complexity to most examples.
+            </p>
+          </section>
+
+          <section>
+            <h3>Limitations</h3>
+            <ul>
+              <li>Small $\epsilon$:
+                <ul>
+                  <li>Slow to converge</li>
+                </ul>
+              </li>
+              <li>Large $\epsilon$:
+                <ul>
+                  <li>Small objects can be skipped</li>
+                  <li>Objects will have "dents"</li>
+                </ul>
+              </li>
+            </ul>
+					</section>
+				</section>
+
+        <section>
+          <section>
+            <h2>Distance fields</h2>
+            <p>
+              Object: <strong>signed distance function</strong> of a point to its surface
+              $sdf:R^3 \rightarrow R$
+            </p>
+            <p>eg.:
+              $sphere(x, y, z) = \sqrt{x^2 + y^2 + z^2} - 1$
+            </p>
+						<pre><code data-trim class="scala">
+case class Vec3d(x: Double, y: Double, z: Double) { ... }
+type DistanceField = Vec3d =&gt; Double
+val sphere: DistanceField =
+  (v: Vec3d) =&gt; sqrt(v.x*v.x + v.y*v.y + v.z*v.z) - 1.0
+						</code></pre>
+					</section>
+
+          <section>
+            <img src="/img/distance.png" alt="Distance field">
+          </section>
+
+          <section>
+            <ul>
+              <li>$sdf(\vec p)$ is the distance to the closest object to $\vec p$</li>
+              <li>Therefore, $sdf(\vec p)$ is always a safe value for $\left | \vec\Delta \right |$</li>
+              <li>In practice, the $\left | \vec\Delta \right | = max(sdf(p), \epsilon)$</li>
+            </ul>
+          </section>
+
+          <section>
+            <img src="img/sphere_tracing.png" alt="Sphere tracing">
+          </section>
+
+          <section>
+						<pre><code data-trim class="scala">
+def traceRay(x: Double, y: Double, sdf: DistanceField, eps: Double) = {
+  val initVector = Vec3d(x, y, zNear)
+  val delta = initVector.normalize
+  def traceRayAux(pos: Vec3d): Color = sdf(pos) match {
+    case dist if dist &lt;= 0 =&gt;
+      Color(255, 255, 255)
+    case dist =&gt;
+      if (pos.z &gt; zFar) Color(0, 0, 0)
+      else traceRayAux(pos + delta*max(dist, eps))
+  }
+  traceRayAux(initVector)
+}
+						</code></pre>
+					</section>
+          <section>
+            <img src="img/lighting.png" alt="Scene" width="400px">
+            <img src="img/iterations.png" alt="Iterations" width="400px">
+            <p><small>$Color(r,g,b) = (iterations \times 5, 50, 50)$</small></p>
+          </section>
+        </section>
+
+        <section>
+          <section>
+            <h2>Distance Field Operations</h2>
+            <ul>
+              <li>By manipulating distance fields, we can implement:
+                <ul>
+                  <li>Boolean operations</li>
+                  <li>Geometric transformations</li>
+                  <li>Crazy stuff</li>
+                </ul>
+            </ul>
+          </section>
+
+          <section>
+            <h3>Boolean Operations</h3>
+            <img src="img/boolean.png" alt="Boolean operations">
+          </section>
+
+          <section>
+            <h3>Boolean Operations</h3>
+            <h4>Union</h4>
+            <img src="img/union.png" alt="Union" height="256px">
+            $$ obj_1 \cup obj_2 = min(sdf_1(\vec p), sdf_2(\vec p)) $$
+          </section>
+
+          <section>
+            <h3>Boolean Operations</h3>
+            <h4>Intersection</h4>
+            <img src="img/intersection.png" alt="Intersection" height="256px">
+            $$ obj_1 \cap obj_2 = max(sdf_1(\vec p), sdf_2(\vec p)) $$
+          </section>
+
+          <section>
+            <h3>Boolean Operations</h3>
+            <h4>Difference</h4>
+            <img src="img/difference.png" alt="Difference" height="256px">
+            $$ obj_1 - obj_2 = obj_1 \cap (\neg obj_2) = max(sdf_1(\vec p), -sdf_2(\vec p)) $$
+          </section>
+
+          <section>
+            <h3>Geometric Transformations</h3>
+            <ul>
+              <li>Translation</li>
+              <li>Rotation</li>
+              <li>Scale</li>
+            </ul>
+          </section>
+
+          <section>
+            <h3>Geometric Transformations</h3>
+            <h4>Translation/Rotation</h4>
+            <ul>
+              <li>Moving objects is hard</li>
+              <li>Moving our ray is easy</li>
+              <li>Apply $T$ to objects $=$ Apply $T^{-1}$ to rays</li>
+            </ul>
+          </section>
+          <section>
+            <h3>Geometric Transformations</h3>
+            <h4>Translation/Rotation</h4>
+						<pre><code data-trim class="scala">
+def translate(delta: Vec3d)(sdf: DistanceField): DistanceField =
+  (v: Vec3d) => sdf(v - delta)
+
+def rotateX(theta: Double)(sdf: DistanceField): DistanceField =
+  (v: Vec3d) => sdf(v.rotX(-theta))
+
+def rotateY(theta: Double)(sdf: DistanceField): DistanceField =
+  (v: Vec3d) => sdf(v.rotY(-theta))
+
+def rotateZ(theta: Double)(sdf: DistanceField): DistanceField =
+  (v: Vec3d) => sdf(v.rotZ(-theta))
+            </code></pre>
+          </section>
+
+          <section>
+            <h3>Geometric Transformations</h3>
+            <h4>Scaling</h4>
+            <ul>
+              <li>The same trick applies to scaling</li>
+              <li>However, scaling a distance field will also scale our distances</li>
+              <li>Rescale the returned distance to know how much to march</li>
+            </ul>
+          </section>
+          <section>
+            <h3>Geometric Transformations</h3>
+            <h4>Scaling</h4>
+						<pre><code data-trim class="scala">
+def scale(s: Double)(sdf: DistanceField): DistanceField =
+  (v: Vec3d) => sdf(v / s) * s
+            </code></pre>
+          </section>
+          <section>
+            <h3>Crazy stuff</h3>
+            <ul>
+              <li>We assumed that $sdf$ is continuous and exact</li>
+              <li>We can break the rules (slightly) to obtain cool effects:
+              <ul>
+                <li>Modulo operations: Infinite repetition</li>
+                <li>Rotations with variable $\theta$: Twist</li>
+                <li>Union with smooth min: Blend</li>
+              </ul>
+            </ul>
+            <img src="img/repeat.png" alt="Repeat" width="200px">
+            <img src="img/twist.png" alt="Twist" width="200px">
+          </section>
+        </section>
+
+        <section>
+          <section>
+            <h2>Illumination</h2>
+            <p>
+              A simple illumination model:
+
+              $$ ambient + \sum_L shadow_L (diffuse_L + specular_L) $$
+            </p>
+          </section>
+          <section>
+            <img src="img/Blinn-Phong_vectors.png">
+          </section>
+          <section>
+            <ul>
+              <li>Global:
+                <ul>
+                  <li>$ ambient = occlusion \times K_{ambient} $</li>
+                </ul>
+              </li>
+              <li>For each light $L$:
+                <ul>
+                  <li>$ shadow_L $</li>
+                  <li>$ diffuse_L = L_{diffuse} \times K_{diffuse} \times max(\vec{N} \cdot \vec{L}, 0) $ </li>
+                  <li>$ specular_L = L_{specular} \times K_{specular} \times max(\vec{R} \cdot \vec{V}, 0)^\alpha $ </li>
+                </ul>
+              </li>
+            </ul>
+
+          </section>
+          <section>
+            <ul>
+              <li>How to calculate the normal vector</li>
+              <li>How to calculate the ambient occlusion</li>
+              <li>How to calculate shadowed areas</li>
+            </ul>
+          </section>
+
+          <section>
+            <h3>Normals</h3>
+            $\vec{N} = \nabla sdf = \left (\frac{\partial sdf}{\partial x}, \frac{\partial sdf}{\partial y}, \frac{\partial sdf}{\partial z} \right )$
+						<pre><code data-trim class="scala">
+def normal(p: Vec3d, scene: DistanceField, eps: Double): Vec3d = {
+  val dx = scene(p + (eps, 0, 0)) - scene(p - (eps, 0, 0))
+  val dy = scene(p + (0, eps, 0)) - scene(p - (0, eps, 0))
+  val dz = scene(p + (0, 0, eps)) - scene(p - (0, 0, eps))
+  new Vec3d(dx, dy, dz).normalized
+}
+            </code></pre>
+          </section>
+
+          <section>
+            <h3>Ambient Occlusion</h3>
+            <ul>
+              <li>Constant ambient light: naïve appoximation to global illumination</li>
+              <li>Intuition:<ul>
+                  <li>Open areas should be well lit</li>
+                  <li>Small confined spaces should be dark</li>
+                </ul>
+              </li>
+              <li>Idea:<ul>
+                <li>If an object is on an open area: $sdf(\vec p + \vec N \times \epsilon) \approx \epsilon$</li>
+                <li>If an object is on an closed area: $sdf(\vec p + \vec N \times \epsilon) \approx 0$</li>
+                </ul>
+              </li>
+            </ul>
+          </section>
+          <section>
+            <h3>Ambient Occlusion</h3>
+            <ul>
+              <li>Solution: for a point $\vec p$:<ul>
+                  <li>Probe $N$ (eg. 6) points $\vec{p'_i} = \vec p + (\vec N \times \epsilon \times i)$</li>
+                  <li>Combine the real distance and the expected distance with a "magic formula", eg.:
+                    $$occlusion = 1 - \frac{\sum_i^N 2^{-i}(\epsilon \times i - sdf(p'_i))}{\sum_i^N 2^{-i} (\epsilon \times i)}$$
+                  </li>
+                </ul>
+              </li>
+            </ul>
+          </section>
+
+          <section>
+            <h3>Ambient Occlusion</h3>
+            <img src="img/ambientOccExample.png" alt="Ambient occlusion example" height="512px">
+          </section>
+
+         <section>
+            <h3>Ambient Occlusion</h3>
+            <pre><code data-trim class="scala">
+def ambientOcclusion(p: Vec3d, n: Vec3d, scene: DistanceField,
+                     epsilon: Double, iter: Int) = {
+  val bias = scene(p)
+  def occlusionAux(i: Int, accum: Double, total: Double): Double =
+    i match {
+      case 0 =&gt; accum / total
+      case i =&gt;
+        val expected = bias + (i * epsilon)
+        val real = scene(p + n * (i * epsilon))
+        val decay = pow(2, i)
+        occlusionAux(i-1,
+          accum+(expected-real)/decay, total+expected/decay)
+    }
+    1 - occlusionAux(iter, 0, 0)
+}
+            </code></pre>
+          </section>
+          <section>
+            <h3>Ambient Occlusion</h3>
+            <img src="img/ambientonly.png" alt="Ambient light only" width="400px">
+            <img src="img/ambientocclusion.png" alt="Ambient Occlusion" width="400px">
+          </section>
+
+          <section>
+            <h3>Shadows</h3>
+            <ul>
+              <li>Simple: Send shadow feelers using ray marching!<ul>
+                  <li>Trace a ray from the object towards the light</li>
+                  <li>If it hits something, it's shadowed</li>
+                  <li>If it reaches the light, it's not</li>
+                </ul>
+              </li>
+            </ul>
+          </section>
+          <section>
+            <h3>Shadows</h3>
+            <h4>Soft-shadows</h4>
+            <ul>
+              <li>Soft-shadows: combine the $N$ distances with a "magic formula"</li>
+              <li>Some properties about this formula<ul>
+                  <li>Small distances should lead to darker shadows (min function)</li>
+                  <li>The heuristic should be disabled on the first few points:<ul>
+                      <li>Avoids artifacts (the ray will start close to the object)</li>
+                      <li>We still need to consider collisions</li>
+                  </ul>
+                  <li>Shadows should get smoother with the distance</li>
+                </ul>
+              </li>
+            </ul>
+          </section>
+          <section>
+            <h3>Shadows</h3>
+            <pre><code data-trim class="scala">
+def shadow(p: Vec3d, lPos: Vec3d, sdf: DistanceField, eps: Double, k: Int) = {
+  val init = (lPos - p).normalized
+  def shadowAux(delta: Vec3d, acc: Double): Double =
+    if (delta.size &gt; (lPos - p).size) acc
+    else
+      if (sdf(p + delta) &lt;= 0.0) 0.0
+      else if (delta.size * k &lt;= 1.0)
+        shadowAux(delta + init * max(sdf(p + delta), eps), acc)
+      else
+        shadowAux(delta + init * max(sdf(p + delta), eps),
+                  min(acc, k * dist / delta.size))
+  shadowAux(initVector * eps, 1.0)
+}
+            </code></pre>
+<small>
+  K is a constant to define how smooth how shadows will be.
+  The smaller the k, the smoother the shadows. 32 is a nice value.
+</small>
+          </section>
+          <section>
+            <h3>Shadows</h3>
+            <img src="img/lightsOnly.png" alt="Lights only" width="400px">
+            <img src="img/shadow.png" alt="Shadows" width="400px">
+          </section>
+
+          <section>
+            <h3>Final Result</h3>
+            <img src="img/lighting.png" alt="Final result">
+          </section>
+        </section>
+
+        <section>
+          <h2>The end</h2>
+          <img src="img/end.png" alt="The end">
+        </section>
+
+			</div>
+
+		</div>
+
+		<script src="lib/js/head.min.js"></script>
+		<script src="js/reveal.js"></script>
+
+		<script>
+
+			// Full list of configuration options available at:
+			// https://github.com/hakimel/reveal.js#configuration
+			Reveal.initialize({
+				controls: true,
+				progress: true,
+				history: true,
+				center: true,
+
+				transition: 'slide', // none/fade/slide/convex/concave/zoom
+
+				// Optional reveal.js plugins
+				dependencies: [
+					{ src: 'lib/js/classList.js', condition: function() { return !document.body.classList; } },
+					{ src: 'plugin/markdown/marked.js', condition: function() { return !!document.querySelector( '[data-markdown]' ); } },
+					{ src: 'plugin/markdown/markdown.js', condition: function() { return !!document.querySelector( '[data-markdown]' ); } },
+					{ src: 'plugin/highlight/highlight.js', async: true, condition: function() { return !!document.querySelector( 'pre code' ); }, callback: function() { hljs.initHighlightingOnLoad(); } },
+					{ src: 'plugin/zoom-js/zoom.js', async: true },
+					{ src: 'plugin/notes/notes.js', async: true },
+					{ src: 'plugin/math/math.js', async: true }
+				]
+			});
+
+		</script>
+
+	</body>
+</html>

@@ -12,7 +12,7 @@ object RotatingCube extends Scene(640,480) with App {
 
   override def render(rayMarcher: RayMarcher, t: Double): Unit = {
     val rotation = twistY(t * math.Pi / 16) _
-    rayMarcher.renderScene(List(
+    rayMarcher.renderScene(canvas, List(
       translation(scaling(rotation(cube)))
     ), lightingModel = phong(0.02, ambientOccl = false))
   }

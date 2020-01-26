@@ -26,7 +26,7 @@ object CompositeObjects extends Scene(320, 240, 2) with App {
 
   override def render(rayMarcher: RayMarcher, t: Double): Unit = {
     val rotation = rotateY(t * math.Pi / 8) _
-    rayMarcher.renderScene(List(
+    rayMarcher.renderScene(canvas, List(
       translate(-3,0,0)(translation(rotation(unionObject))),
       translate(0,0,0)(translation(rotation(intersectionObject))),
       translate(3,0,0)(translation(rotation(differenceObject)))

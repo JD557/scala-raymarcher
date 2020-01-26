@@ -1,5 +1,6 @@
 package eu.joaocosta.raymarcher
 
+import eu.joaocosta.minart.Canvas
 import eu.joaocosta.raymarcher.Lighting._
 import eu.joaocosta.raymarcher.Objects._
 import eu.joaocosta.raymarcher.RayMarcher._
@@ -7,21 +8,20 @@ import org.apache.commons.math3.util.FastMath._
 
 import scala.annotation.tailrec
 
-class RayMarcher(width: Int, height: Int, scale: Int = 1, zNear: Double = 1.0, zFar: Double = 30.0, minStep: Double = 0.02) {
+class RayMarcher(width: Int, height: Int, zNear: Double = 1.0, zFar: Double = 30.0, minStep: Double = 0.02) {
   private[this] val ratio = height.toDouble / width
-  private[this] val canvas = new GraphicalCanvas(width, height, scale)
   private[this] val pixelList = (0 until width).flatMap { x =>
     (0 until height).map { y =>
       (x, y, (x.toDouble - width/2)/width, ratio * (y.toDouble - height/2)/height)
     }
   }.toVector.par
 
-  def renderScene(objs: Seq[DistanceField], light: Light = defaultLight, lightingModel: LightingModel = defaultPhong) = {
+  def renderScene(canvas: Canvas, objs: Seq[DistanceField], light: Light = defaultLight, lightingModel: LightingModel = defaultPhong) = {
     val scene = objs.fold(empty){Operations.union}
 
     pixelList.foreach { case (x, y, xx, yy) =>
       canvas.putPixel(x, y,
-        traceRay(xx, yy, scene, light, lightingModel, zNear, zFar, minStep)
+        traceRay(xx, yy, scene, light, lightingModel, zNear, zFar, minStep).toMinartColor
       )
     }
 

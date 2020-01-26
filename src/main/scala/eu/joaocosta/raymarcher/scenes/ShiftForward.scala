@@ -25,7 +25,7 @@ object ShiftForward extends Scene(320, 240, 2) with App {
   val floor = paint(Color(128, 128, 128))(translate(0, 7, 10)(scale(5.0)(cube)))
 
   override def render(rayMarcher: RayMarcher, t: Double): Unit =
-    rayMarcher.renderScene(List(
+    rayMarcher.renderScene(canvas, List(
       paint(Color(128,128,128))(translate(0, 7, 10)(scale(5.0)(cube))),
       translate(0, 0, 10)(twistY(math.sin(t/4) * math.Pi / 4)(sfLogo))
     ), lightingModel = phong(0.02, ambientOccl = false))
